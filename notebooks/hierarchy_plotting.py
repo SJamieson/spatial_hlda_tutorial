@@ -24,5 +24,6 @@ def plot_image_hierarchy(fig : plt.Figure, G : nx.Graph):
         a.imshow(plt.imread(G.node[n]['image']))
         a.set_xticks([])
         a.set_yticks([])
+        # a.set_title(n.name)
 
     ax.axis('off')
