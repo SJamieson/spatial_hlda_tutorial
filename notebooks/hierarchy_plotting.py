@@ -6,9 +6,10 @@ from hlda.sampler import NCRPNode
 
 
 class Node:
-    def __init__(self, name, children):
+    def __init__(self, name, children, **kwargs):
         self.name = name
         self.children = children
+        self.data = kwargs
 
     def __getitem__(self, item):
         if item == 0:
