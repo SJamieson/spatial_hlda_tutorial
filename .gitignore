@@ -2,6 +2,7 @@
 __pycache__/
 *.mp4
 *.gif
+**/.ipynb_checkpoints
 **/.ipynb_checkpoints/
 *.dot
 #*.png
