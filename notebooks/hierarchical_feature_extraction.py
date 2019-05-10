@@ -25,10 +25,12 @@ def hook_layer(model, idx, features, debug=False):
     layer : torch.nn.Module = model._modules['features'][idx]
     return layer.register_forward_hook(get_hook(features))
 
-def load_image(path):
+def load_image(path, gpu=False):
     img = Image.open(path)
     img_tensor : torch.Tensor = transforms.ToTensor()(img)
-    return img_tensor.reshape(1, *img_tensor.shape).cuda()
+    if gpu:
+        img_tensor = img_tensor.cuda()
+    return img_tensor.reshape(1, *img_tensor.shape)
 
 def get_image_list(dir):
     images = []
@@ -43,7 +45,7 @@ def get_batch(i, batch_size):
     with torch.no_grad():
         for i in range(i*batch_size, min(len(images), (i+1)*batch_size)):
             try:
-                model.forward(load_image(images[i]))
+                model.forward(load_image(images[i], gpu=True))
             except RuntimeError as e:
                 print('Skipping', images[i])
     # return 1

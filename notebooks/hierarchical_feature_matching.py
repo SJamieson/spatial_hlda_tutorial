@@ -1,6 +1,6 @@
+from typing import List
 import numpy as np
 from torchvision import models
-import timeit
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 
@@ -9,14 +9,14 @@ try:
 except ModuleNotFoundError:
     from hierarchical_feature_extraction import *
 
-model = models.vgg16_bn(pretrained=True).cuda()
 data_dir = '/home/stewart/datasets/places365/val_256'
 feature_dir = 'output/'
 clusters = np.load(feature_dir + 'clusters.npy')[()]
 compute_mean_diff = True
+vocab_sizes = [cluster.shape[0] for cluster in clusters.values()]
 
 images = get_image_list(data_dir)
-random.shuffle(images)
+# random.shuffle(images)
 
 layers = list(clusters.keys())
 
@@ -40,55 +40,79 @@ def get_receptive_field(cluster, image_path, idx, num_cells, show=False):
 mean_sum = 0
 mean_std = 0
 n = 0
-num_images = 1000
-num_exemplars = 8
+num_validation_images = 500
+num_test_images = 1000
+num_exemplars = 7
 # test_clusters = [54, 56, 65, 71, 83]
-test_clusters = list(range(1, 7))
-num_test_clusters = len(test_clusters)
+# test_clusters = list(range(1, 7))
+num_test_clusters = 6
 
-exemplars = {cluster: [] for cluster in test_clusters}
+image_words = {image_path: {layer: [] for layer in layers} for image_path in images[:num_test_images]}
 
 for target_layer in layers:
+    test_clusters = []
     with open(feature_dir + f'kmeans-{target_layer}.pkl', 'rb') as f:
-        kmeans = pickle.load(f) # type: cluster.MiniBatchKMeans
+        kmeans = pickle.load(f)  # type: cluster.MiniBatchKMeans
 
-    with torch.no_grad():
-        layer = target_layer
+    layer = target_layer
+    cluster_scores = None
+    model = models.vgg16_bn(pretrained=True).cuda()
+    for test_mode in [False, True]:
+        if test_mode:
+            while len(test_clusters) < num_test_clusters:
+                test_clusters.append(np.argmax(cluster_scores))
+                cluster_scores[test_clusters[-1]] = 0
+            exemplars = {cluster: [] for cluster in test_clusters}
+        num_images = num_test_images if test_mode else num_validation_images
         for image_path in tqdm(images[:num_images], file=sys.stdout):
+            img = load_image(image_path, gpu=True)
             features = {layer: [] for layer in layers}
             handle = hook_layer(model, layer, features[layer])
             try:
-                model.forward(load_image(image_path))
+                with torch.no_grad():
+                    model.forward(img)
             except RuntimeError:
                 continue
             deltas = kmeans.transform(features[layer][-1])
-            cluster_assignments = list(np.argmin(deltas, axis=1))
+            cluster_assignments = np.argmin(deltas, axis=1)
             cluster_distances = np.min(deltas, axis=1)
-            for cluster_num, cluster_id in enumerate(test_clusters):
-                idx = 0
-                while cluster_id in cluster_assignments[idx:]:
-                    idx = cluster_assignments[idx:].index(cluster_id) + idx
-                    # assert cluster_assignments[idx] == cluster_id
-                    if len(exemplars[cluster_id]) < num_exemplars or cluster_distances[idx] < exemplars[cluster_id][-1][
-                        1]:
-                        try:
-                            img = get_receptive_field(cluster_id, image_path, idx, features[layer][-1].shape[0])
-                            if len(exemplars[cluster_id]) < num_exemplars:
-                                exemplars[cluster_id].append((img, cluster_distances[idx]))
-                            else:
-                                exemplars[cluster_id][-1] = (img, cluster_distances[idx])
-                        except TypeError as e:
-                            print('\nfailed to display image:', e)
-                    idx += 1
-                exemplars[cluster_id].sort(key=lambda x: x[1])  # We wait until now to sort so we have <=1 example/image
-            if compute_mean_diff:
-                mean_sum += np.mean(cluster_distances)
-                mean_std += np.std(cluster_distances)
-            n += 1
+            if test_mode:
+                image_words[image_path][layer].extend(
+                    list(cluster_assignments[cluster_distances < mean_sum - 1 * mean_std]))
+                for cluster_num, cluster_id in enumerate(test_clusters):
+                    idx = 0
+                    cluster_assignments = list(cluster_assignments)
+                    while cluster_id in cluster_assignments[idx:]:
+                        idx = cluster_assignments[idx:].index(cluster_id) + idx
+                        # assert cluster_assignments[idx] == cluster_id
+                        if len(exemplars[cluster_id]) < num_exemplars \
+                                or cluster_distances[idx] < exemplars[cluster_id][-1][1]:
+                            try:
+                                img = get_receptive_field(cluster_id, image_path, idx, features[layer][-1].shape[0])
+                                if len(exemplars[cluster_id]) < num_exemplars:
+                                    exemplars[cluster_id].append((img, cluster_distances[idx]))
+                                else:
+                                    exemplars[cluster_id][-1] = (img, cluster_distances[idx])
+                            except TypeError as e:
+                                print('\nfailed to display image:', e)
+                        idx += 1
+                    exemplars[cluster_id].sort(
+                        key=lambda x: x[1])  # We wait until now to sort so we have <=1 example/image
+            else:
+                mean_sum += np.mean(cluster_distances) / num_images
+                mean_std += np.std(cluster_distances) / num_images
+                n += 1
+                if cluster_scores is None:
+                    cluster_scores = np.bincount(cluster_assignments, minlength=deltas.shape[1])
+                else:
+                    new_scores = np.bincount(cluster_assignments, minlength=deltas.shape[1])
+                    cluster_scores += new_scores
             handle.remove()
+            del deltas, cluster_assignments, cluster_distances, features, img
+            torch.cuda.empty_cache()
     if compute_mean_diff:
-        print(mean_sum / n)
-        print(mean_std / n)
+        print(mean_sum)
+        print(mean_std)
     for cluster in test_clusters:
         print([e[1] for e in exemplars[cluster]])
 
@@ -109,3 +133,22 @@ for target_layer in layers:
     # plt.title(f'Exemplars from layer {target_layer}')
     plt.savefig(f'figures/exemplars-{target_layer}.png')
     plt.show()
+    del kmeans, exemplars, model
+
+with open('hierarchical-corpus.txt', 'w') as out_file:
+    with open('hierarchical-corpus-with-hints.txt', 'w') as hinted_out_file:
+        for image in image_words.keys():
+            word_tokens = []
+            hinted_tokens = []
+            offset = 0
+            for i, layer in enumerate(image_words[image].keys()):
+                words = image_words[image][layer]  # type: List[int]
+                new_tokens = [f'{word + offset}:{words.count(word)}' for word in set(words)]
+                word_tokens.extend(new_tokens)
+                new_tokens = [token + f':{len(image_words[image].keys()) - i - 1}' for token in new_tokens]
+                hinted_tokens.extend(new_tokens)
+                offset += vocab_sizes[i]
+            if len(word_tokens) < 1:
+                continue
+            out_file.write(f'{len(word_tokens)} {" ".join(word_tokens)}\n')
+            hinted_out_file.write(f'{len(hinted_tokens)} {" ".join(hinted_tokens)}\n')
