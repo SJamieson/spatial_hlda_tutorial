@@ -28,7 +28,9 @@ def get_receptive_field(cluster, image_path, idx, num_cells, show=False):
     cell_w, cell_h = int(w / side_len), int(h / side_len)
     x, y = idx // side_len * cell_w, idx % side_len * cell_h
     plt.axis('off')
-    if cell_w <= x < (w - cell_w) and cell_h <= y < (h - cell_h):
+    if cell_w * 2 <= x < (w - cell_w * 3) and cell_h * 2 <= y < (y - cell_h * 3):
+        img = img.crop((x - cell_w*2, y - cell_h*2, x + 3 * cell_w, y + 3 * cell_h)).resize((w, h))
+    elif cell_w <= x < (w - cell_w * 2) and cell_h <= y < (h - cell_h * 2):
         img = img.crop((x - cell_w, y - cell_h, x + 2 * cell_w, y + 2 * cell_h)).resize((w, h))
     else:
         img = img.crop((x, y, x + cell_w, y + cell_h)).resize((w, h))
@@ -59,9 +61,13 @@ for target_layer in layers:
     model = models.vgg16_bn(pretrained=True).cuda()
     for test_mode in [False, True]:
         if test_mode:
+            ignore_count = 10
+            i = 0
             while len(test_clusters) < num_test_clusters:
-                test_clusters.append(np.argmax(cluster_scores))
-                cluster_scores[test_clusters[-1]] = 0
+                if i >= ignore_count:
+                    test_clusters.append(np.argmax(cluster_scores))
+                i += 1
+                cluster_scores[np.argmax(cluster_scores)] = 0
             exemplars = {cluster: [] for cluster in test_clusters}
         num_images = num_test_images if test_mode else num_validation_images
         for image_path in tqdm(images[:num_images], file=sys.stdout):
