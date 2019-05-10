@@ -13,7 +13,8 @@ data_dir = '/home/stewart/datasets/places365/val_256'
 feature_dir = 'output/'
 clusters = np.load(feature_dir + 'clusters.npy')[()]
 compute_mean_diff = True
-vocab_sizes = [cluster.shape[0] for cluster in clusters.values()]
+# mode = 'filters'
+mode = 'clusters'
 
 images = get_image_list(data_dir)
 # random.shuffle(images)
@@ -51,17 +52,23 @@ num_test_clusters = 6
 
 image_words = {image_path: {layer: [] for layer in layers} for image_path in images[:num_test_images]}
 
+if mode == 'clusters':
+    vocab_sizes = [cluster.shape[0] for cluster in clusters.values()]
+elif mode == 'filters':
+    vocab_sizes = [0 for i in range(len(layers))]
+
 for target_layer in layers:
     test_clusters = []
-    with open(feature_dir + f'kmeans-{target_layer}.pkl', 'rb') as f:
-        kmeans = pickle.load(f)  # type: cluster.MiniBatchKMeans
+    if mode == 'clusters':
+        with open(feature_dir + f'kmeans-{target_layer}.pkl', 'rb') as f:
+            kmeans = pickle.load(f)  # type: cluster.MiniBatchKMeans
 
     layer = target_layer
     cluster_scores = None
     model = models.vgg16_bn(pretrained=True).cuda()
     for test_mode in [False, True]:
         if test_mode:
-            ignore_count = 10
+            ignore_count = 10 if mode == 'clusters' else 5
             i = 0
             while len(test_clusters) < num_test_clusters:
                 if i >= ignore_count:
@@ -79,7 +86,14 @@ for target_layer in layers:
                     model.forward(img)
             except RuntimeError:
                 continue
-            deltas = kmeans.transform(features[layer][-1])
+            if mode == 'clusters':
+                deltas = kmeans.transform(features[layer][-1])
+            elif mode == 'filters':
+                deltas = np.concatenate((1 - np.tanh(features[layer][-1]),
+                                         1 - np.tanh(-features[layer][-1])), axis=1)
+                vocab_sizes[layers.index(target_layer)] = deltas.shape[1]
+            else:
+                raise RuntimeError('Bad mode')
             cluster_assignments = np.argmin(deltas, axis=1)
             cluster_distances = np.min(deltas, axis=1)
             if test_mode:
@@ -137,12 +151,12 @@ for target_layer in layers:
             plt.imshow(exemplars[cluster][row][0])
     plt.tight_layout()
     # plt.title(f'Exemplars from layer {target_layer}')
-    plt.savefig(f'figures/exemplars-{target_layer}.png')
+    plt.savefig(f'figures/exemplars-{mode}-{target_layer}.png')
     plt.show()
-    del kmeans, exemplars, model
+    del exemplars, model
 
-with open('hierarchical-corpus.txt', 'w') as out_file:
-    with open('hierarchical-corpus-with-hints.txt', 'w') as hinted_out_file:
+with open(f'hierarchical-corpus-{mode}.txt', 'w') as out_file:
+    with open(f'hierarchical-corpus-with-hints-{mode}.txt', 'w') as hinted_out_file:
         for image in image_words.keys():
             word_tokens = []
             hinted_tokens = []
