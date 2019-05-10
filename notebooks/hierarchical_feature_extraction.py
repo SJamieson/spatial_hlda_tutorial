@@ -54,8 +54,8 @@ if __name__ == "__main__":
     model = models.vgg16_bn(pretrained=True)
     data_dir = '/home/stewart/datasets/places365/val_256'
     layers = [20, 30, 40]
-    num_clusters = [200, 200, 200]
-    num_epochs = 1
+    num_clusters = [800, 400, 200]
+    num_epochs = 2
     batch_size = 64
 
     model.cuda()
