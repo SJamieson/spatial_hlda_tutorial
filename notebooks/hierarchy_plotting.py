@@ -80,7 +80,7 @@ def build_tree_from_hlda(node: NCRPNode, topics=None):
     return Node(node.node_id, children), topics
 
 
-def build_tree_from_file(filename: str, output_dir: str):
+def build_tree_from_file(filename: str, output_dir: str, label='inference'):
     topics = {}
     nodes = {}
     root = None
@@ -99,7 +99,7 @@ def build_tree_from_file(filename: str, output_dir: str):
                 else:
                     word, count = token.split(':')
                     words[int(word)] = int(count)
-            topics[topic_id] = word_counts_to_image(words, save=output_dir + f'/inference-z{topic_id}')
+            topics[topic_id] = word_counts_to_image(words, save=output_dir + f'/{label}-z{topic_id}')
 
     def get_node(node):
         children = [] if len(nodes[node]) > 0 else None
